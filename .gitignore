@@ -1,0 +1,12 @@
+*.obj
+*.pdb
+*.tlog
+*.log
+*.lastbuildstate
+*.exp
+*.ipdb
+*.lib
+*.pdb
+*.iobj
+*.recipe
+
