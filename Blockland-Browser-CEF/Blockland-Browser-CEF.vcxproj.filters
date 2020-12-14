@@ -13,12 +13,21 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Header Files\cef">
+      <UniqueIdentifier>{9faef5bf-db9a-41c3-be7b-1a4ef5f3f31c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\cef">
+      <UniqueIdentifier>{65f13a2d-1ff3-48d9-a4c9-6f04d5cf7ed2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\directx">
+      <UniqueIdentifier>{a1a0f1c8-10b3-4354-9a3a-f3b996960444}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\directx">
+      <UniqueIdentifier>{27d594df-8375-4f27-b331-5c25a9cae652}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="RedoBlHooks.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="torque.cpp">
@@ -27,18 +36,63 @@
     <ClCompile Include="glapi.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="browser_client.cpp">
+      <Filter>Source Files\cef</Filter>
+    </ClCompile>
+    <ClCompile Include="cef_app.cpp">
+      <Filter>Source Files\cef</Filter>
+    </ClCompile>
+    <ClCompile Include="dx_renderer.cpp">
+      <Filter>Source Files\directx</Filter>
+    </ClCompile>
+    <ClCompile Include="osr_render_handler_win.cpp">
+      <Filter>Source Files\cef</Filter>
+    </ClCompile>
+    <ClCompile Include="bbr_render_handler.cpp">
+      <Filter>Source Files\cef</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11.cpp">
+      <Filter>Source Files\directx</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="glext.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="RedoBlHooks.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="torque.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="glapi.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="structs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="tvector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Torque.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cef_app.h">
+      <Filter>Header Files\cef</Filter>
+    </ClInclude>
+    <ClInclude Include="browser_client.h">
+      <Filter>Header Files\cef</Filter>
+    </ClInclude>
+    <ClInclude Include="dx_renderer.h">
+      <Filter>Header Files\directx</Filter>
+    </ClInclude>
+    <ClInclude Include="osr_renderer_settings.h">
+      <Filter>Header Files\cef</Filter>
+    </ClInclude>
+    <ClInclude Include="osr_render_handler_win.h">
+      <Filter>Header Files\cef</Filter>
+    </ClInclude>
+    <ClInclude Include="bbr_render_handler.h">
+      <Filter>Header Files\cef</Filter>
+    </ClInclude>
+    <ClInclude Include="d3d11.h">
+      <Filter>Header Files\directx</Filter>
+    </ClInclude>
+    <ClInclude Include="wglext.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

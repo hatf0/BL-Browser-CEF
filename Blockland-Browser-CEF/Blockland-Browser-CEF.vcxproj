@@ -90,6 +90,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -104,6 +105,8 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -141,16 +144,30 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="browser_client.cpp" />
+    <ClCompile Include="cef_app.cpp" />
+    <ClCompile Include="d3d11.cpp" />
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="dx_renderer.cpp" />
     <ClCompile Include="glapi.cpp" />
-    <ClCompile Include="RedoBlHooks.cpp" />
+    <ClCompile Include="osr_render_handler_win.cpp" />
+    <ClCompile Include="bbr_render_handler.cpp" />
     <ClCompile Include="torque.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="browser_client.h" />
+    <ClInclude Include="cef_app.h" />
+    <ClInclude Include="d3d11.h" />
+    <ClInclude Include="dx_renderer.h" />
     <ClInclude Include="glapi.h" />
     <ClInclude Include="glext.h" />
-    <ClInclude Include="RedoBlHooks.hpp" />
-    <ClInclude Include="torque.hpp" />
+    <ClInclude Include="osr_renderer_settings.h" />
+    <ClInclude Include="osr_render_handler_win.h" />
+    <ClInclude Include="bbr_render_handler.h" />
+    <ClInclude Include="structs.h" />
+    <ClInclude Include="Torque.h" />
+    <ClInclude Include="tvector.h" />
+    <ClInclude Include="wglext.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

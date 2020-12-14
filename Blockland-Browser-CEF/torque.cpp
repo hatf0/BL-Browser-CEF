@@ -1,203 +1,279 @@
-#include <stdarg.h>
+#include "Torque.h"
+#include "structs.h"
 #include <stdio.h>
+#include <Psapi.h>
 
-#include "torque.hpp"
+// Con::printf
+PrintfFn Printf;
+// CodeBlock::Exec
+CodeBlockExecFn CodeBlockExec;
+// Sim::Init (unnecessary - we're loaded early enough)
+SimInitFn SimInit;
+// _StringTable::Insert
+StringTableInsertFn StringTableInsert;
+// Namespace::find
+NamespaceFindFn NamespaceFind;
+// Namespace::CreateLocalEntry
+NamespaceCreateLocalEntryFn NamespaceCreateLocalEntry;
+// Namespace::trashCache
+NamespaceTrashCacheFn NamespaceTrashCache;
+// Dictionary::add
+DictionaryAddFn DictionaryAdd;
+// Dictionary::addVariable
+DictionaryAddVariableFn DictionaryAddVariable;
+// Dictionary::getVariable
+DictionaryGetVariableFn DictionaryGetVariable;
+// Dictionary::Entry::SetStringValue
+DictionaryEntrySetStringValueFn DictionaryEntrySetStringValue;
+// prependDollar ties into getVariable
+prependDollarFn prependDollar;
+// CodeBlock::CodeBlock
+CodeBlockConstructorFn CodeBlockConstructor;
+// CodeBlock::compileExec
+CodeBlockCompileExecFn CodeBlockCompileExec;
+// dork allocators
+dAllocFn dAlloc;
+dFreeFn dFree;
+swapBuffersFn swapBuffers;
 
-ADDR tsf_mCacheSequence;
-ADDR tsf_mCacheAllocator;
-ADDR tsf_gIdDictionary;
-ADDR tsf_gEvalState_globalVars;
+DWORD ImageBase = NULL;
+DWORD ImageSize = NULL;
 
-BlFunctionDefIntern(tsf_BlStringTable__insert);
-BlFunctionDefIntern(tsf_BlNamespace__find);
-BlFunctionDefIntern(tsf_BlNamespace__createLocalEntry);
-BlFunctionDefIntern(tsf_BlDataChunker__freeBlocks);
-BlFunctionDefIntern(tsf_BlCon__evaluate);
-BlFunctionDefIntern(tsf_BlCon__executef);
-BlFunctionDefIntern(tsf_BlCon__executefSimObj);
-BlFunctionDefIntern(tsf_BlCon__getVariable);
-BlFunctionDefIntern(tsf_BlDictionary__addVariable);
-BlFunctionDefIntern(tsf_BlSim__findObject_name);
-BlFunctionDefIntern(tsf_BlStringStack__getArgBuffer);
+// override the default allocators to use dork allocators
+// void* operator new (size_t size) { return dAlloc(size); }
+// void* operator new[] (size_t size) { return dAlloc(size); }
 
-char* tsf_GetIntArg(signed int value)
+// void operator delete (void* buf) { dFree(buf); }
+// void operator delete[](void* buf) { dFree(buf); }
+
+//Set the module start and length
+void InitScanner(const char* moduleName)
 {
-	char* ret = tsf_BlStringStack__getArgBuffer(16);
-	snprintf(ret, 16, "%d", value);
+	HMODULE module = GetModuleHandleA(moduleName);
+	if (!module) return;
 
-	return ret;
+	MODULEINFO info;
+	GetModuleInformation(GetCurrentProcess(), module, &info, sizeof(MODULEINFO));
+
+	ImageBase = (DWORD)info.lpBaseOfDll;
+	ImageSize = info.SizeOfImage;
 }
 
-char* tsf_GetFloatArg(float value)
+bool CompareData(PBYTE data, PBYTE pattern, char* mask)
 {
-	char* ret = tsf_BlStringStack__getArgBuffer(32);
-	snprintf(ret, 32, "%g", value);
-
-	return ret;
-}
-
-char* tsf_ScriptThis(ADDR obj)
-{
-	return tsf_GetIntArg(*(signed int*)(obj + 32));
-}
-
-const char* tsf_Eval(const char* code)
-{
-	const char* argv[] = { nullptr, code };
-	return tsf_BlCon__evaluate(0, 2, argv);
-}
-
-const char* tsf_Evalf(const char* fmt, ...)
-{
-	va_list args;
-	char code[4096];
-	va_start(args, fmt);
-	vsnprintf(code, 4096, fmt, args);
-	va_end(args);
-
-	return tsf_Eval((const char*)code);
-}
-
-ADDR tsf_FindObject(unsigned int id)
-{
-	ADDR obj = *(ADDR*)(*(ADDR*)(tsf_gIdDictionary)+4 * (id & 0xFFF));
-
-	if (!obj)
-		return 0;
-
-	while (obj && *(unsigned int*)(obj + 32) != id)
+	//Iterate over the data, pattern and mask in parallel
+	for (; *mask; ++data, ++pattern, ++mask)
 	{
-		obj = *(ADDR*)(obj + 16);
-		if (!obj)
-			return 0;
+		//And check for equality at each unmasked byte
+		if (*mask == 'x' && *data != *pattern)
+			return false;
 	}
 
-	return obj;
+	return (*mask) == NULL;
 }
 
-ADDR tsf_FindObject(const char* name)
+//Find a pattern in memory
+DWORD FindPattern(DWORD imageBase, DWORD imageSize, PBYTE pattern, char* mask)
 {
-	return (ADDR)tsf_BlSim__findObject_name(name);
-}
-
-ADDR tsf_LookupNamespace(const char* ns, const char* package)
-{
-	const char* ste_package;
-	if (package)
-		ste_package = tsf_BlStringTable__insert(package, 0);
-	else
-		ste_package = nullptr;
-
-	if (ns)
+	for (DWORD i = imageBase; i < imageBase + imageSize; i++)
 	{
-		const char* ste_namespace = tsf_BlStringTable__insert(ns, 0);
-		return tsf_BlNamespace__find(ste_namespace, ste_package);
+		//check for matching pattern at every byte
+		if (CompareData((PBYTE)i, pattern, mask))
+			return i;
 	}
-	else
-		return tsf_BlNamespace__find(nullptr, ste_package);
+
+	return 0;
 }
 
-ADDR tsf_AddConsoleFuncInternal(const char* pname, const char* cname, const char* fname, signed int cbtype, const char* usage, signed int mina, signed int maxa)
-{
-	const char* ste_fname = tsf_BlStringTable__insert(fname, 0);
-	ADDR ns = tsf_LookupNamespace(cname, pname);
-	ADDR ent = tsf_BlNamespace__createLocalEntry(ns, ste_fname);
+bool SwapVTableEntry(void** vtable, int idx, void* newEntry, void** oldEntry) {
+	Printf("%s - Hooking vtable at address %x (idx: %d)", PROJECT, vtable, idx);
+	Printf("%s - Pre-hook address: %x", PROJECT, vtable[idx]);
+	DWORD oldProtection;
+	DWORD protectSize = (idx * sizeof(void*) + 4); // set page to RW (and add a bit of margin just in case)
+	{
+		VirtualProtect(vtable, protectSize, PAGE_EXECUTE_READWRITE, &oldProtection);
+		if (oldEntry) {
+			*oldEntry = vtable[idx];
+		}
+		vtable[idx] = newEntry;
+		VirtualProtect(vtable, protectSize, oldProtection, &oldProtection);
+	}
 
-	*(signed int*)tsf_mCacheSequence += 1;
-	tsf_BlDataChunker__freeBlocks(*(ADDR*)tsf_mCacheAllocator);
-
-	*(const char**)(ent + 24) = usage;
-	*(signed int*)(ent + 16) = mina;
-	*(signed int*)(ent + 20) = maxa;
-	*(signed int*)(ent + 12) = cbtype;
-
-	return ent;
+	if (!oldEntry) {
+		Printf("%s - Restoring vtable entry worked");
+		Printf("%s - New vtable entry: %x", PROJECT, vtable[10]);
+		return true;
+	}
+	else {
+		if (*oldEntry != vtable[idx]) {
+			Printf("%s - Hooking worked", PROJECT);
+			Printf("%s - Old vtable entry: %x", PROJECT, *oldEntry);
+			Printf("%s - New vtable entry: %x", PROJECT, vtable[10]);
+			return true;
+		}
+		else {
+			Printf("%s - Hooking failed, game may crash", PROJECT);
+			return false;
+		}
+	}
 }
 
-const char* tsf_GetVar(const char* name)
+//Scan the module for a pattern
+DWORD ScanFunc(const char* pattern, const char* mask)
 {
-	return tsf_BlCon__getVariable(name);
+	return FindPattern(ImageBase, ImageSize - strlen(mask), (PBYTE)pattern, (char*)mask);
 }
 
-void tsf_AddVarInternal(const char* name, signed int varType, void* data)
-{
-	tsf_BlDictionary__addVariable((ADDR*)tsf_gEvalState_globalVars, name, varType, data);
+
+// this is our shim function that basically lets us hook in 
+// it replicates the function (which is inlined)
+Namespace::Entry* InsertFunction(const char* nameSpace, const char* name) {
+	Namespace* ns = NULL;
+	if (ns) {
+		ns = NamespaceFind(StringTableInsert(nameSpace, 0), 0);
+	}
+	else {
+		ns = mGlobalNamespace;
+	}
+
+	Namespace::Entry* entry = NamespaceCreateLocalEntry(ns, StringTableInsert(name, 0));
+	NamespaceTrashCache();
+	return entry;
 }
 
-void tsf_AddVar(const char* name, const char** data)
+//Register a torquescript function that returns a string. The function must look like this:
+//const char* func(DWORD* obj, int argc, const char* argv[])
+void AddFunction(const char* ns, const char* name, StringCallback cb, const char* usage, int minArgs, int maxArgs)
 {
-	tsf_AddVarInternal(name, 10, data);
+	Namespace::Entry* func = InsertFunction(ns, name);
+	func->mUsage = usage;
+	func->mMaxArgs = maxArgs;
+	func->mMinArgs = minArgs;
+	func->mType = Namespace::Entry::StringCallbackType;
+	func->cb.mStringCallbackFunc = cb;
 }
 
-void tsf_AddVar(const char* name, signed int* data)
+//Register a torquescript function that returns an int. The function must look like this:
+//int func(DWORD* obj, int argc, const char* argv[])
+void AddFunction(const char* ns, const char* name, IntCallback cb, const char* usage, int minArgs, int maxArgs)
 {
-	tsf_AddVarInternal(name, 4, data);
+	Namespace::Entry* func = InsertFunction(ns, name);
+	func->mUsage = usage;
+	func->mMaxArgs = maxArgs;
+	func->mMinArgs = minArgs;
+	func->mType = Namespace::Entry::IntCallbackType;
+	func->cb.mIntCallbackFunc = cb;
 }
 
-void tsf_AddVar(const char* name, float* data)
+//Register a torquescript function that returns a float. The function must look like this:
+//float func(DWORD* obj, int argc, const char* argv[])
+void AddFunction(const char* ns, const char* name, FloatCallback cb, const char* usage, int minArgs, int maxArgs)
 {
-	tsf_AddVarInternal(name, 8, data);
+	Namespace::Entry* func = InsertFunction(ns, name);
+	func->mUsage = usage;
+	func->mMaxArgs = maxArgs;
+	func->mMinArgs = minArgs;
+	func->mType = Namespace::Entry::FloatCallbackType;
+	func->cb.mFloatCallbackFunc = cb;
 }
 
-void tsf_AddVar(const char* name, bool* data)
+//Register a torquescript function that returns nothing. The function must look like this:
+//void func(DWORD* obj, int argc, const char* argv[])
+void AddFunction(const char* ns, const char* name, VoidCallback cb, const char* usage, int minArgs, int maxArgs)
 {
-	tsf_AddVarInternal(name, 6, data);
+	Namespace::Entry* func = InsertFunction(ns, name);
+	func->mUsage = usage;
+	func->mMaxArgs = maxArgs;
+	func->mMinArgs = minArgs;
+	func->mType = Namespace::Entry::VoidCallbackType;
+	func->cb.mVoidCallbackFunc = cb;
 }
 
-void tsf_AddConsoleFunc(const char* pname, const char* cname, const char* fname, tsf_StringCallback sc, const char* usage, signed int mina, signed int maxa)
+//Register a torquescript function that returns a bool. The function must look like this:
+//bool func(DWORD* obj, int argc, const char* argv[])
+void AddFunction(const char* ns, const char* name, BoolCallback cb, const char* usage, int minArgs, int maxArgs)
 {
-	ADDR ent = tsf_AddConsoleFuncInternal(pname, cname, fname, 1, usage, mina, maxa);
-	*(tsf_StringCallback*)(ent + 40) = sc;
+	Namespace::Entry* func = InsertFunction(ns, name);
+	func->mUsage = usage;
+	func->mMaxArgs = maxArgs;
+	func->mMinArgs = minArgs;
+	func->mType = Namespace::Entry::BoolCallbackType;
+	func->cb.mBoolCallbackFunc = cb;
 }
 
-void tsf_AddConsoleFunc(const char* pname, const char* cname, const char* fname, tsf_IntCallback ic, const char* usage, signed int mina, signed int maxa)
+//Expose an integer variable to torquescript
+void AddVariable(const char* name, int* data)
 {
-	ADDR ent = tsf_AddConsoleFuncInternal(pname, cname, fname, 2, usage, mina, maxa);
-	*(tsf_IntCallback*)(ent + 40) = ic;
+	DictionaryAddVariable(&gEvalState->globalVars, StringTableInsert(name, 0), 4, data);
 }
 
-void tsf_AddConsoleFunc(const char* pname, const char* cname, const char* fname, tsf_FloatCallback fc, const char* usage, signed int mina, signed int maxa)
+//Expose a boolean variable to torquescript
+void AddVariable(const char* name, bool* data)
 {
-	ADDR ent = tsf_AddConsoleFuncInternal(pname, cname, fname, 3, usage, mina, maxa);
-	*(tsf_FloatCallback*)(ent + 40) = fc;
+	DictionaryAddVariable(&gEvalState->globalVars, StringTableInsert(name, 0), 6, data);
 }
 
-void tsf_AddConsoleFunc(const char* pname, const char* cname, const char* fname, tsf_VoidCallback vc, const char* usage, signed int mina, signed int maxa)
+//Expose a float variable to torquescript
+void AddVariable(const char* name, float* data)
 {
-	ADDR ent = tsf_AddConsoleFuncInternal(pname, cname, fname, 4, usage, mina, maxa);
-	*(tsf_VoidCallback*)(ent + 40) = vc;
+	DictionaryAddVariable(&gEvalState->globalVars, StringTableInsert(name, 0), 8, data);
 }
 
-void tsf_AddConsoleFunc(const char* pname, const char* cname, const char* fname, tsf_BoolCallback bc, const char* usage, signed int mina, signed int maxa)
+//Expose a string variable to torquescript
+void AddVariable(const char* name, char* data)
 {
-	ADDR ent = tsf_AddConsoleFuncInternal(pname, cname, fname, 5, usage, mina, maxa);
-	*(tsf_BoolCallback*)(ent + 40) = bc;
+	DictionaryAddVariable(&gEvalState->globalVars, StringTableInsert(name, 0), 10, data);
 }
 
-bool tsf_InitInternal()
+//Get a global variable
+const char* GetGlobalVariable(const char* name) {
+	return DictionaryGetVariable(&gEvalState->globalVars, StringTableInsert(name, 0));
+}
+
+//Set a global variable
+void SetGlobalVariable(const char* name, const char* val) {
+	Dictionary::Entry* entry = DictionaryAdd(&gEvalState->globalVars, StringTableInsert(prependDollar(name), 0));
+	DictionaryEntrySetStringValue(entry, val);
+}
+
+//Evaluate a torquescript string in global scope
+const char* Eval(const char* str)
 {
-	BlScanFunctionHex(tsf_BlStringTable__insert, "83 EC 0C 80 3D ? ? ? ? ?");
-	BlScanFunctionHex(tsf_BlNamespace__find, "55 8B EC 6A FF 68 ? ? ? ? 64 A1 ? ? ? ? 50 83 EC 0C 53 56 57 A1 ? ? ? ? 33 C5 50 8D 45 F4 64 A3 ? ? ? ? 8B DA 8B D1");
-	BlScanFunctionHex(tsf_BlNamespace__createLocalEntry, "55 8B EC 6A FF 68 ? ? ? ? 64 A1 ? ? ? ? 50 83 EC 08 53 56 57 A1 ? ? ? ? 33 C5 50 8D 45 F4 64 A3 ? ? ? ? 89 4D F0");
-	BlScanFunctionHex(tsf_BlDataChunker__freeBlocks, "55 8B EC 6A FF 68 ? ? ? ? 64 A1 ? ? ? ? 50 51 53 56 57 A1 ? ? ? ? 33 C5 50 8D 45 F4 64 A3 ? ? ? ? 8B D9 8B 33");
-	BlScanFunctionHex(tsf_BlCon__evaluate, "55 8B EC 6A FF 68 ? ? ? ? 64 A1 ? ? ? ? 50 56 57 A1 ? ? ? ? 33 C5 50 8D 45 F4 64 A3 ? ? ? ? 8B 75 10");
-	BlScanFunctionHex(tsf_BlCon__executef, "81 EC ? ? ? ? A1 ? ? ? ? 33 C4 89 84 24 ? ? ? ? 53 55 56 8B B4 24 ? ? ? ? 33 C9");
-	BlScanFunctionHex(tsf_BlCon__executefSimObj, "81 EC ? ? ? ? A1 ? ? ? ? 33 C4 89 84 24 ? ? ? ? 53 56 8B B4 24 ? ? ? ? 33 C9");
-	BlScanFunctionHex(tsf_BlCon__getVariable, "53 56 8B F1 57 85 F6 0F 84 ? ? ? ?");
-	BlScanFunctionHex(tsf_BlDictionary__addVariable, "8B 44 24 04 56 57 8B F9");
-	BlScanFunctionHex(tsf_BlSim__findObject_name, "57 8B F9 8A 17");
-	BlScanFunctionHex(tsf_BlStringStack__getArgBuffer, "55 8B EC 83 E4 F8 8B 0D ? ? ? ? A1 ? ? ? ? 56 57 8B 7D 08 8D 14 01 03 D7 3B 15 ? ? ? ? 72 2C 8B 0D");
+	CodeBlock* block = new CodeBlock();
+	block = CodeBlockConstructor(block);
+	return CodeBlockCompileExec(block, NULL, str, false);
+}
 
-	ADDR BlScanHex(tsf_mCacheSequenceLoc, "FF 05 ? ? ? ? B9 ? ? ? ? 8B F8 E8 ? ? ? ? 8B 44 24 1C 89 47 18 8B 44 24 14");
-	ADDR BlScanHex(tsf_mCacheAllocatorLoc, "89 35 ? ? ? ? C7 06 ? ? ? ? A1 ? ? ? ? 68 ? ? ? ? C7 40 ? ? ? ? ? E8 ? ? ? ? 83 C4 04 8B 4D F4 64 89 0D ? ? ? ? 59 5E 8B E5 5D C3");
-	ADDR BlScanHex(tsf_gIdDictionaryLoc, "89 15 ? ? ? ? E8 ? ? ? ? 8B F0 89 75 F0");
-	ADDR BlScanHex(tsf_gEvalState_globalVarsLoc, "B9 ? ? ? ? E8 ? ? ? ? 68 ? ? ? ? 6A 0A 68 ? ? ? ? B9 ? ? ? ? E8 ? ? ? ? E8 ? ? ? ?");
+//Initialize the Torque Interface
+bool InitTorqueStuff()
+{
+	InitScanner("Blockland.exe");
 
-	tsf_mCacheSequence = *(ADDR*)(tsf_mCacheSequenceLoc + 2);
-	tsf_mCacheAllocator = *(ADDR*)(tsf_mCacheAllocatorLoc + 2);
-	tsf_gIdDictionary = *(ADDR*)(tsf_gIdDictionaryLoc + 2);
-	tsf_gEvalState_globalVars = *(ADDR*)(tsf_gEvalState_globalVarsLoc + 1);
+	dFree = (dFreeFn)(ImageBase + 0x176E40);
+	dAlloc = (dAllocFn)(ImageBase + 0x178160);
+	if (!dFree || !dAlloc) // we need the allocators, die if we don't have them
+		return false;
+
+	Printf = (PrintfFn)(ImageBase + 0x37BC0);
+	if (!Printf) // we need printf for debug output
+		return false;
+
+	StringTableInsert = (StringTableInsertFn)(ImageBase + 0x053910);
+	NamespaceFind = (NamespaceFindFn)(ImageBase + 0x41060);
+	mGlobalNamespace = NamespaceFind(NULL, NULL);
+	gEvalState = (ExprEvalState*)(ImageBase + 0x384800);
+	NamespaceCreateLocalEntry = (NamespaceCreateLocalEntryFn)(ImageBase + 0x0415A0);
+	NamespaceTrashCache = (NamespaceTrashCacheFn)(ImageBase + 0x3D7C0);
+	DictionaryAdd = (DictionaryAddFn)(ImageBase + 0x40720);
+	DictionaryAddVariable = (DictionaryAddVariableFn)(ImageBase + 0x40D20);
+	DictionaryGetVariable = (DictionaryGetVariableFn)(ImageBase + 0x40BC0);
+	DictionaryEntrySetStringValue = (DictionaryEntrySetStringValueFn)(ImageBase + 0x40C10);
+	prependDollar = (prependDollarFn)(ImageBase + 0x36ED0);
+	CodeBlockConstructor = (CodeBlockConstructorFn)(ImageBase + 0x335B0);
+	CodeBlockCompileExec = (CodeBlockCompileExecFn)(ImageBase + 0x340A0);
+	swapBuffers = (swapBuffersFn)ScanFunc(
+		"\x55\x8B\xEC\x6A\xFF\x68\x00\x00\x00\x00\x64\xA1\x00\x00\x00\x00\x50\x81\xEC\x00\x00\x00\x00\xA1\x00\x00\x00\x00\x33\xC5\x89\x45\xF0\x53\x56\x57\x50\x8D\x45\xF4\x64\xA3\x00\x00\x00\x00\x80\x3D",
+		"xxxxxx????xx????xxx????x????xxxxxxxxxxxxxx????xx");
 
 	return true;
 }
-

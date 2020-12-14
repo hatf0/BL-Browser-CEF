@@ -1,6 +1,10 @@
 #include <Windows.h>
 #include <gl\GL.h>
 #include "glext.h"
+#include "wglext.h"
+
+static HMODULE oglLibrary;
+
 void* GetAnyGLFuncAddress(const char* name);
 void initGL();
 #define GLFUNC(returnType, convention, name, ...)         \
@@ -17,6 +21,11 @@ GLFUNC(void, __stdcall, BL_glTexSubImage2D, unsigned int, int, int, int, int, in
 GLFUNC(const char*, __stdcall, BL_glGetString, unsigned int);
 GLFUNC(void, __stdcall, BL_glGenerateMipmap, unsigned int);
 GLFUNC(PROC, WINAPI, BL_wglGetProcAddress, LPCSTR bleh);
+GLFUNC(HGLRC, WINAPI, BL_wglGetCurrentContext);
+GLFUNC(HGLRC, WINAPI, BL_wglCreateContextAttribsARB, HDC arg, HGLRC copy, const int*);
+GLFUNC(HDC, WINAPI, BL_wglGetCurrentDC);
+GLFUNC(BOOL, WINAPI, BL_wglShareLists, HGLRC, HGLRC);
+GLFUNC(BOOL, WINAPI, BL_wglMakeCurrent, HDC, HGLRC);
 GLFUNC(void, , BL_glGenBuffers, GLsizei n, GLuint* buf);
 GLFUNC(void, , BL_glGenBuffersARB, GLsizei n, GLuint* buffers);
 GLFUNC(void, , BL_glBindBuffer, int target, unsigned int bufferName);
@@ -27,5 +36,13 @@ GLFUNC(void, , BL_glBufferData, unsigned int target, GLsizeiptr size, const void
 GLFUNC(void, , BL_glBufferSubData, GLenum target, GLintptr offset, GLsizeiptr size, const void* data);
 GLFUNC(void, , BL_glBufferDataARB, unsigned int target, GLsizeiptr size, const void* data, unsigned int usage);
 GLFUNC(void, , BL_glBufferSubDataARB, GLenum target, GLintptr offset, GLsizeiptr size, const void* data);
+GLFUNC(void, , BL_glBufferStorage, GLenum target, GLsizeiptr size, const void* data, GLbitfield flags);
+GLFUNC(void, , BL_glCopyNamedBufferSubData, GLuint read, GLuint write, GLintptr readOffset, GLintptr writeOffset, GLsizeiptr size);
+extern PFNWGLDXOPENDEVICENVPROC BL_wglDXOpenDeviceNV;
+extern PFNWGLDXCLOSEDEVICENVPROC BL_wglDXCloseDeviceNV;
+extern PFNWGLDXREGISTEROBJECTNVPROC BL_wglDXRegisterObjectNV;
+extern PFNWGLDXUNREGISTEROBJECTNVPROC BL_wglDXUnregisterObjectNV;
+extern PFNWGLDXLOCKOBJECTSNVPROC BL_wglDXLockObjectsNV;
+extern PFNWGLDXUNLOCKOBJECTSNVPROC BL_wglDXUnlockObjectsNV;
 extern char* glVersion;
 extern unsigned int glMajor;

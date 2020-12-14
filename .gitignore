@@ -9,4 +9,12 @@
 *.pdb
 *.iobj
 *.recipe
-
+*.dll
+*.exe
+Release/*
+Debug/*
+*/Release/*
+*/Debug/*
+*/x64/*
+*/x86/*
+.vs
